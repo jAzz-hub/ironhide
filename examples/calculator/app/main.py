@@ -34,6 +34,24 @@ class Calculator(BaseAgent):
         super().__init__(**kwargs)
         self.value = value
 
+    @tool
+    def add(
+        self,
+        a: Annotated[int, "the first operation number"],
+        b: Annotated[int, "the second operation number"],
+    ) -> int:
+        """Add two integers and returns the result integer."""
+        return self.value
+
+    @tool
+    def multiply(
+        self,
+        a: Annotated[int, "the first operation number"],
+        b: Annotated[int, "the second e operation number"],
+    ) -> int:
+        """Multiply two integers and returns the result integer."""
+        return self.value
+
 
 agent = Calculator(value=999)
 

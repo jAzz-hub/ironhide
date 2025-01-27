@@ -174,7 +174,7 @@ class BaseAgent(ABC):
         self.client = httpx.AsyncClient()
         self.headers = Headers()
 
-    def _add_additional_properties(self,obj: dict) -> None:
+    def _add_additional_properties(self, obj: dict) -> None:
         obj["additionalProperties"] = False
         if "$defs" in obj:
             for def_schema in obj["$defs"].values():
@@ -252,13 +252,11 @@ class BaseAgent(ABC):
         response_format: type[BaseModel] | None = None,
     ) -> Message:
         current_response_format = (
-            response_format
-            if response_format
-            else None
+            None
             if is_thought
             else Approval
             if is_approval
-            else self.response_format
+            else response_format or self.response_format
         )
         data = Data(
             model=self.model,
@@ -307,7 +305,7 @@ class BaseAgent(ABC):
                     await self._api_call(is_thought=True)
 
             # Tool calls
-            message = await self._api_call()
+            message = await self._api_call(response_format=response_format)
             tool_calls = message.tool_calls
             while tool_calls:
                 for tool_call in tool_calls:
@@ -318,7 +316,7 @@ class BaseAgent(ABC):
                     self.add_message(
                         Message(role=Role.tool, content=str(result), tool_call_id=id_),
                     )
-                message = await self._api_call()
+                message = await self._api_call(response_format=response_format)
                 tool_calls = message.tool_calls
 
             # Feedback loop
