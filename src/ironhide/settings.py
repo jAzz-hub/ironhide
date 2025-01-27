@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     # General
     log_level: str = ""
+    timeout: int = 30
 
 
 settings = Settings()

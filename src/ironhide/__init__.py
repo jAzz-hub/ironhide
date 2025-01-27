@@ -2,8 +2,9 @@ import inspect
 import json
 import logging
 from abc import ABC
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel, Field
@@ -173,6 +174,13 @@ class BaseAgent(ABC):
         self.client = httpx.AsyncClient()
         self.headers = Headers()
 
+    def _add_additional_properties(self,obj: dict) -> None:
+        obj["additionalProperties"] = False
+        if "$defs" in obj:
+            for def_schema in obj["$defs"].values():
+                if isinstance(def_schema, dict):
+                    self._add_additional_properties(def_schema)
+
     def _make_response_format_section(
         self,
         response_format: type[BaseModel] | None,
@@ -180,7 +188,7 @@ class BaseAgent(ABC):
         if response_format is None:
             return None
         schema = response_format.model_json_schema()
-        schema["additionalProperties"] = False
+        self._add_additional_properties(schema)
         return ResponseFormat(
             json_schema=JsonSchema(
                 name=schema["title"],
@@ -197,7 +205,7 @@ class BaseAgent(ABC):
             bool: "boolean",
         }
         for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            if name.startswith("_") or name == "chat":
+            if not getattr(method, "is_tool", False):
                 continue
             properties = {
                 param_name: PropertyDefinition(
@@ -258,17 +266,21 @@ class BaseAgent(ABC):
             response_format=self._make_response_format_section(current_response_format)
             if not is_thought
             else None,
-            tools=self.tools,
-            tool_choice="none" if is_thought or is_approval else "auto",
+            tools=self.tools or None,
+            tool_choice=None
+            if not self.tools
+            else "none"
+            if is_thought or is_approval
+            else "auto",
         )
         response = await self.client.post(
             COMPLETIONS_URL,
             headers=self.headers.model_dump(by_alias=True),
             json=data.model_dump(by_alias=True),
-            timeout=30.0,
+            timeout=settings.timeout,
         )
-        # print(json.dumps(data.model_dump(by_alias=True), indent=4))
         if response.status_code != 200:
+            logging.error(json.dumps(data.model_dump(by_alias=True), indent=4))
             logging.error(response.text)
             raise Exception(response.text)
         completion = ChatCompletion(**response.json())
@@ -321,3 +333,11 @@ class BaseAgent(ABC):
         # Response Message
         message = await self._api_call(response_format=response_format)
         return message.content or ""
+
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def tool(func: F) -> F:
+    func.is_tool = True  # type: ignore[attr-defined]
+    return func

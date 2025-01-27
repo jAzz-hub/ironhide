@@ -25,6 +25,7 @@ class Calculator(BaseAgent):
         super().__init__(**kwargs)
         self.value = value
 
+    @tool
     def add(
         self,
         a: Annotated[int, "the first operation number"],
@@ -33,6 +34,7 @@ class Calculator(BaseAgent):
         """Add two integers and returns the result integer."""
         return self.value
 
+    @tool
     def multiply(
         self,
         a: Annotated[int, "the first operation number"],

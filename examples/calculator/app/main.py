@@ -2,7 +2,7 @@ import json
 from typing import Annotated, Any
 
 from fastapi import FastAPI
-from ironhide import BaseAgent
+from ironhide import BaseAgent, tool
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -33,22 +33,6 @@ class Calculator(BaseAgent):
     def __init__(self, value: int, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.value = value
-
-    def add(
-        self,
-        a: Annotated[int, "the first operation number"],
-        b: Annotated[int, "the second operation number"],
-    ) -> int:
-        """Add two integers and returns the result integer."""
-        return self.value
-
-    def multiply(
-        self,
-        a: Annotated[int, "the first operation number"],
-        b: Annotated[int, "the second e operation number"],
-    ) -> int:
-        """Multiply two integers and returns the result integer."""
-        return self.value
 
 
 agent = Calculator(value=999)
