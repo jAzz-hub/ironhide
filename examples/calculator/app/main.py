@@ -1,12 +1,18 @@
 import json
+import logging
 from typing import Annotated, Any
 
 from fastapi import FastAPI
 from ironhide import BaseAgent, tool
+from ironhide.settings import settings
 from pydantic import BaseModel
 
 app = FastAPI()
 
+logging.basicConfig(
+    level=settings.log_level,
+    format="%(asctime)s  %(levelname)s  %(filename)s  %(funcName)s  %(message)s",
+)
 
 class Request(BaseModel):
     """User Message to Agent."""

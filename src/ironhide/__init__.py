@@ -11,10 +11,7 @@ from pydantic import BaseModel, Field
 
 from ironhide.settings import settings
 
-logging.basicConfig(
-    level=settings.log_level,
-    format="%(asctime)s  %(levelname)s  %(filename)s  %(funcName)s  %(message)s",
-)
+logger = logging.getLogger(__name__)
 
 COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 
@@ -138,6 +135,10 @@ class Data(BaseModel):
     tool_choice: Literal["none", "auto", "required"] | None = None
 
 
+class Reason(BaseModel):
+    thought: str
+
+
 class Approval(BaseModel):
     is_approved: bool
 
@@ -252,7 +253,7 @@ class BaseAgent(ABC):
         response_format: type[BaseModel] | None = None,
     ) -> Message:
         current_response_format = (
-            None
+            Reason
             if is_thought
             else Approval
             if is_approval
@@ -261,9 +262,7 @@ class BaseAgent(ABC):
         data = Data(
             model=self.model,
             messages=self.messages,
-            response_format=self._make_response_format_section(current_response_format)
-            if not is_thought
-            else None,
+            response_format=self._make_response_format_section(current_response_format),
             tools=self.tools or None,
             tool_choice=None
             if not self.tools
@@ -278,8 +277,10 @@ class BaseAgent(ABC):
             timeout=settings.timeout,
         )
         if response.status_code != 200:
-            logging.error(json.dumps(data.model_dump(by_alias=True), indent=4))
-            logging.error(response.text)
+            logger.error(
+                data.model_dump_json(by_alias=True, exclude_none=True, indent=4)
+            )
+            logger.error(response.text)
             raise Exception(response.text)
         completion = ChatCompletion(**response.json())
         message = completion.choices[0].message
@@ -288,14 +289,19 @@ class BaseAgent(ABC):
 
     def add_message(self, message: Message) -> None:
         self.messages.append(message)
-        logging.info(json.dumps(message.model_dump(exclude_none=True), indent=4))
+        logger.info(message.model_dump_json(by_alias=True, exclude_none=True, indent=4))
+
+    async def context_provider(self, input_message: str) -> str:
+        return input_message
 
     async def chat(
         self,
         input_message: str,
         response_format: type[BaseModel] | None = None,
     ) -> str:
-        self.add_message(Message(role=Role.user, content=input_message))
+        self.add_message(
+            Message(role=Role.user, content=await self.context_provider(input_message))
+        )
         is_approved = False
         while not is_approved:
             # Chain of thought
@@ -303,9 +309,9 @@ class BaseAgent(ABC):
                 for thought in self.chain_of_thought:
                     self.add_message(Message(role=Role.system, content=thought))
                     await self._api_call(is_thought=True)
+            message = await self._api_call(response_format=response_format)
 
             # Tool calls
-            message = await self._api_call(response_format=response_format)
             tool_calls = message.tool_calls
             while tool_calls:
                 for tool_call in tool_calls:
@@ -324,12 +330,16 @@ class BaseAgent(ABC):
                 self.add_message(Message(role=Role.system, content=self.feedback_loop))
                 await self._api_call(is_thought=True)
                 message = await self._api_call(is_approval=True)
-                is_approved = Approval(**json.loads(message.content or "")).is_approved
+                is_approved = Approval.model_validate_json(
+                    message.content or ""
+                ).is_approved
+                if is_approved:
+                    message = await self._api_call(response_format=response_format)
+                    break
             else:
-                is_approved = True
+                break
 
         # Response Message
-        message = await self._api_call(response_format=response_format)
         return message.content or ""
 
 
