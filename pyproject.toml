@@ -1,13 +1,17 @@
 [project]
 name = "ironhide"
-version = "0.1.7"
+version = "0.1.9"
 description = "OOP llm agentic framework"
 readme = "README.md"
 authors = [
     { name = "Lucas Martins Soares", email = "lucasmsoares96@gmail.com" },
 ]
 requires-python = ">=3.13"
-dependencies = ["pydantic>=2.10.5", "pydantic-settings>=2.7.1", "httpx>=0.28.1"]
+dependencies = [
+    "pydantic>=2.10.5",
+    "pydantic-settings>=2.7.1",
+    "httpx>=0.28.1",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,12 +1,15 @@
+import base64
 import inspect
 import json
 import logging
 from abc import ABC
-from collections.abc import Callable
+from asyncio import sleep
+from collections.abc import Buffer, Callable
 from enum import Enum
 from typing import Any, Literal, TypeVar
 
 import httpx
+from httpx._types import RequestFiles
 from pydantic import BaseModel, Field
 
 from ironhide.settings import settings
@@ -89,9 +92,19 @@ class ToolCall(BaseModel):
     function: ToolFunction
 
 
+class TextContent(BaseModel):
+    type: str = "text"
+    text: str
+
+
+class ImageUrlContent(BaseModel):
+    type: str = "image_url"
+    image_url: dict[str, str]
+
+
 class Message(BaseModel):
     role: Role
-    content: str | None = None
+    content: str | list[TextContent | ImageUrlContent] | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     refusal: str | None = None
@@ -135,6 +148,17 @@ class Data(BaseModel):
     tool_choice: Literal["none", "auto", "required"] | None = None
 
 
+class Error(BaseModel):
+    message: str
+    type: str
+    param: str | None = None
+    code: str | None
+
+
+class ErrorResponse(BaseModel):
+    error: Error
+
+
 class Reason(BaseModel):
     thought: str
 
@@ -143,20 +167,63 @@ class Approval(BaseModel):
     is_approved: bool
 
 
+async def audio_transcription(files: RequestFiles) -> str:
+    transcription_url = "https://api.openai.com/v1/audio/transcriptions"
+    transcription_headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
+    async with httpx.AsyncClient() as client:
+        data = {"model": settings.openai_audio_to_text_model_id}
+        transcription_response = await client.post(
+            transcription_url,
+            headers=transcription_headers,
+            files=files,
+            data=data,
+        )
+    return str(transcription_response.json().get("text", ""))
+
+
+async def image_transcription(text: str, files: RequestFiles) -> str:
+    (name, file_bytes, mime) = files["file"]  # type: ignore
+    if isinstance(file_bytes, Buffer):
+        base64_image = base64.b64encode(file_bytes).decode("utf-8")
+        content_items: list[TextContent | ImageUrlContent] = [
+            TextContent(text=text),
+            ImageUrlContent(
+                image_url={"url": f"data:{mime!s};base64,{base64_image}"},
+            ),
+        ]
+        message = Message(role=Role.user, content=content_items)
+        data = Data(model=settings.default_model, messages=[message])
+        headers = Headers().model_dump(by_alias=True)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                COMPLETIONS_URL,
+                headers=headers,
+                json=data.model_dump(by_alias=True),
+            )
+            response.raise_for_status()
+            completion = ChatCompletion(**response.json())
+    return str(completion.choices[0].message.content) or ""
+
+
+T = TypeVar("T", bound=BaseModel)
+
+
 class BaseAgent(ABC):
     model: str
     instructions: str | None = None
     response_format: type[BaseModel] | None = None
     chain_of_thought: tuple[str, ...] | None = None
     feedback_loop: str | None = None
+    messages: list[Message] = []
 
     def __init__(
         self,
         instructions: str | None = None,
-        response_format: type[BaseModel] | None = None,
+        response_format: type[T] | None = None,
         chain_of_thought: tuple[str, ...] | None = None,
         feedback_loop: str | None = None,
         model: str | None = None,
+        messages: list[Message] | None = None,
     ) -> None:
         self.instructions = instructions or getattr(self, "instructions", None)
         self.response_format = response_format or getattr(self, "response_format", None)
@@ -167,20 +234,50 @@ class BaseAgent(ABC):
         )
         self.feedback_loop = feedback_loop or getattr(self, "feedback_loop", None)
         self.model = model or getattr(self, "model", None) or settings.default_model
-        self.messages: list[Message] = []
+        self.messages = (
+            messages or getattr(self, "messages", None) or self._get_history()
+        )
         self.dict_tool: dict[str, Any] = {}
         self.tools = self._generate_tools()
         if self.instructions:
-            self.add_message(Message(role=Role.system, content=self.instructions))
+            self.add_message(
+                Message(role=Role.system, content=self.instructions),
+                in_begin=True,
+            )
         self.client = httpx.AsyncClient()
         self.headers = Headers()
 
-    def _add_additional_properties(self, obj: dict) -> None:
+    def _get_history(self) -> list[Message]:
+        return []
+
+    def _remove_defaults(self, schema: dict[str, Any]) -> None:
+        if isinstance(schema, dict):
+            schema.pop("default", None)
+            schema.pop("format", None)
+            for value in schema.values():
+                if isinstance(value, dict):
+                    self._remove_defaults(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            self._remove_defaults(item)
+
+    def _add_additional_properties(self, obj: dict[str, Any]) -> None:
         obj["additionalProperties"] = False
-        if "$defs" in obj:
-            for def_schema in obj["$defs"].values():
+        if "properties" in obj:
+            for def_schema in obj["properties"].values():
                 if isinstance(def_schema, dict):
                     self._add_additional_properties(def_schema)
+
+    def _remove_defs(self, schema: dict[str, Any]) -> None:
+        if schema.get("$defs"):
+            for i in schema["properties"]:
+                property_ref = schema["properties"][i]["$ref"]
+                for j in schema["$defs"]:
+                    clean_property = property_ref.replace("#/$defs/", "")
+                    if clean_property == j:
+                        schema["properties"][i] = schema["$defs"][j]
+            schema.pop("$defs")
 
     def _make_response_format_section(
         self,
@@ -189,7 +286,13 @@ class BaseAgent(ABC):
         if response_format is None:
             return None
         schema = response_format.model_json_schema()
+        self._remove_defs(schema)
+        self._remove_defaults(schema)
         self._add_additional_properties(schema)
+        properties = schema.get("properties", {})
+        if "required" not in schema:
+            schema["required"] = list(properties.keys())
+
         return ResponseFormat(
             json_schema=JsonSchema(
                 name=schema["title"],
@@ -231,7 +334,8 @@ class BaseAgent(ABC):
                         name=name,
                         description=(inspect.getdoc(method) or "").strip(),
                         parameters=ParametersDefinition(
-                            properties=properties, required=required
+                            properties=properties,
+                            required=required,
                         ),
                     ),
                 ),
@@ -270,37 +374,57 @@ class BaseAgent(ABC):
             if is_thought or is_approval
             else "auto",
         )
-        response = await self.client.post(
-            COMPLETIONS_URL,
-            headers=self.headers.model_dump(by_alias=True),
-            json=data.model_dump(by_alias=True),
-            timeout=settings.timeout,
+        logger.debug(
+            data.model_dump_json(by_alias=True, exclude_none=True, indent=4),
         )
-        if response.status_code != 200:
-            logger.error(
-                data.model_dump_json(by_alias=True, exclude_none=True, indent=4)
+        while True:
+            response = await self.client.post(
+                COMPLETIONS_URL,
+                headers=self.headers.model_dump(by_alias=True),
+                json=data.model_dump(
+                    by_alias=True,
+                    mode="json",
+                    exclude_none=True,
+                ),
+                timeout=settings.timeout,
             )
-            logger.error(response.text)
-            raise Exception(response.text)
+            if response.status_code == 429:
+                logger.warning("Rate limit exceeded. Retrying in 3 seconds...")
+                await sleep(3)
+                continue
+            if response.status_code != 200:
+                logger.error(
+                    data.model_dump_json(by_alias=True, exclude_none=True, indent=4),
+                )
+                error_response = ErrorResponse.model_validate_json(response.text)
+                logger.error(error_response.error.message)
+                raise Exception(error_response.error.message)
+            break
         completion = ChatCompletion(**response.json())
         message = completion.choices[0].message
         self.add_message(message)
         return message
 
-    def add_message(self, message: Message) -> None:
-        self.messages.append(message)
+    def add_message(self, message: Message, *, in_begin: bool = False) -> None:
+        if in_begin:
+            self.messages.insert(0, message)
+        else:
+            self.messages.append(message)
         logger.info(message.model_dump_json(by_alias=True, exclude_none=True, indent=4))
 
-    async def context_provider(self, input_message: str) -> str:
+    async def _context_provider(self, input_message: str) -> str:
         return input_message
 
     async def chat(
         self,
         input_message: str,
-        response_format: type[BaseModel] | None = None,
-    ) -> str:
+        response_format: type[T] | None = None,
+    ) -> T | BaseModel | str:
         self.add_message(
-            Message(role=Role.user, content=await self.context_provider(input_message))
+            Message(
+                role=Role.user,
+                content=await self._context_provider(input_message),
+            ),
         )
         is_approved = False
         while not is_approved:
@@ -331,7 +455,7 @@ class BaseAgent(ABC):
                 await self._api_call(is_thought=True)
                 message = await self._api_call(is_approval=True)
                 is_approved = Approval.model_validate_json(
-                    message.content or ""
+                    str(message.content) or "",
                 ).is_approved
                 if is_approved:
                     message = await self._api_call(response_format=response_format)
@@ -339,8 +463,10 @@ class BaseAgent(ABC):
             else:
                 break
 
-        # Response Message
-        return message.content or ""
+        result_cls = response_format or self.response_format
+        if result_cls:
+            return result_cls.model_validate_json(str(message.content) or "")
+        return str(message.content) or ""
 
 
 F = TypeVar("F", bound=Callable[..., Any])
