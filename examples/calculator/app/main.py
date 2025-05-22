@@ -66,7 +66,6 @@ agent = Calculator(value=999)
 @app.post("/")
 async def agent_message(
     message: Request,
-) -> Response:
+) -> Response | BaseModel | str:
     """Get response from agent."""
-    content = await agent.chat(message.content, response_format=Response)
-    return Response(**json.loads(content))
+    return await agent.chat(message.content, response_format=Response)

@@ -8,4 +8,4 @@ response=$(curl -s -X 'POST' \
   "content": "2+2"
 }')
 
-echo "$response" | jq
+echo "$response"

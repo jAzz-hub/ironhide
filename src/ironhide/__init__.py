@@ -364,17 +364,18 @@ class BaseAgent(ABC):
                 ),
                 timeout=settings.timeout,
             )
-            if response.status_code == 429:
-                logger.warning("Rate limit exceeded. Retrying in 3 seconds...")
-                await sleep(3)
-                continue
             if response.status_code != 200:
                 logger.error(
                     data.model_dump_json(by_alias=True, exclude_none=True, indent=4),
                 )
                 error_response = ErrorResponse.model_validate_json(response.text)
                 logger.error(error_response.error.message)
-                raise Exception(error_response.error.message)
+                if response.status_code == 429:
+                    logger.warning("Rate limit exceeded. Retrying in 10 seconds...")
+                    await sleep(10)
+                    continue
+                else:
+                    raise Exception(error_response.error.message)
             break
         completion = ChatCompletion(**response.json())
         message = completion.choices[0].message
