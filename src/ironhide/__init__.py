@@ -181,30 +181,6 @@ async def audio_transcription(files: RequestFiles) -> str:
     return str(transcription_response.json().get("text", ""))
 
 
-async def image_transcription(text: str, files: RequestFiles) -> str:
-    (name, file_bytes, mime) = files["file"]  # type: ignore
-    if isinstance(file_bytes, Buffer):
-        base64_image = base64.b64encode(file_bytes).decode("utf-8")
-        content_items: list[TextContent | ImageUrlContent] = [
-            TextContent(text=text),
-            ImageUrlContent(
-                image_url={"url": f"data:{mime!s};base64,{base64_image}"},
-            ),
-        ]
-        message = Message(role=Role.user, content=content_items)
-        data = Data(model=settings.default_model, messages=[message])
-        headers = Headers().model_dump(by_alias=True)
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                COMPLETIONS_URL,
-                headers=headers,
-                json=data.model_dump(by_alias=True),
-            )
-            response.raise_for_status()
-            completion = ChatCompletion(**response.json())
-    return str(completion.choices[0].message.content) or ""
-
-
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -417,15 +393,39 @@ class BaseAgent(ABC):
 
     async def chat(
         self,
-        input_message: str,
+        input_message: str | RequestFiles,
         response_format: type[T] | None = None,
+        files: RequestFiles | None = None,
     ) -> T | BaseModel | str:
-        self.add_message(
-            Message(
-                role=Role.user,
-                content=await self._context_provider(input_message),
-            ),
+        # Handle audio transcription if input_message is not a string
+        processed_message: str = (
+            await audio_transcription(input_message)
+            if not isinstance(input_message, str)
+            else input_message
         )
+
+        # Handle image transcription if files are provided
+        if files:
+            (name, file_bytes, mime) = files["file"]  # type: ignore
+            if isinstance(file_bytes, Buffer):
+                base64_image = base64.b64encode(file_bytes).decode("utf-8")
+                content_items: list[TextContent | ImageUrlContent] = [
+                    TextContent(text=processed_message),
+                    ImageUrlContent(
+                        image_url={"url": f"data:{mime!s};base64,{base64_image}"},
+                    ),
+                ]
+                self.add_message(
+                    Message(role=Role.user, content=content_items),
+                )
+        else:
+            self.add_message(
+                Message(
+                    role=Role.user,
+                    content=await self._context_provider(processed_message),
+                ),
+            )
+
         is_approved = False
         while not is_approved:
             # Chain of thought
@@ -456,7 +456,7 @@ class BaseAgent(ABC):
                 message = await self._api_call(is_approval=True)
                 is_approved = Approval.model_validate_json(
                     str(message.content) or "",
-                ).is_approved
+            ).is_approved
                 if is_approved:
                     message = await self._api_call(response_format=response_format)
                     break

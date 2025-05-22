@@ -1,0 +1,24 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Project Structure
+
+Ironhide is a Python library that simplifies the process of building high-quality autonomous agents by representing them as classes. The project follows a clean and organized structure:
+
+## Core Structure
+- [src/ironhide/__init__.py](mdc:src/ironhide/__init__.py) - Main module containing the core functionality
+- [src/ironhide/settings.py](mdc:src/ironhide/settings.py) - Configuration settings for the library
+- [pyproject.toml](mdc:pyproject.toml) - Project metadata and dependencies
+
+## Examples
+The `examples/` directory contains reference implementations:
+- `examples/calculator/` - Calculator agent example
+- `examples/extractor/` - Data extraction agent example
+- `examples/image/` - Image processing agent example
+
+## Development Files
+- [py.typed](mdc:src/ironhide/py.typed) - Marker file for PEP 561 typing support
+- [.python-version](mdc:.python-version) - Python version specification
+- [uv.lock](mdc:uv.lock) - Lock file for dependencies

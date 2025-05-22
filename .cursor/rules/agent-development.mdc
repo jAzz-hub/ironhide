@@ -1,0 +1,33 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Agent Development Guide
+
+Ironhide uses a class-based approach to create autonomous agents. Here's how to develop agents:
+
+## Basic Structure
+Agents are created by inheriting from `BaseAgent`:
+
+```python
+class MyAgent(BaseAgent):
+    instructions = """Your agent's instructions here"""
+    chain_of_thought = (
+        "Step 1 reasoning prompt",
+        "Step 2 reasoning prompt",
+    )
+    feedback_loop = "Feedback evaluation prompt"
+```
+
+## Key Components
+1. **Instructions**: Define the agent's core behavior and constraints
+2. **Chain of Thought**: Multi-step reasoning process
+3. **Feedback Loop**: Self-evaluation mechanism
+4. **Tools**: Functions that the agent can call, decorated with `@tool`
+
+## Example Implementation
+See [examples/calculator/](mdc:examples/calculator) for a complete agent implementation showing:
+- Tool definition and usage
+- Request/Response models
+- API integration
