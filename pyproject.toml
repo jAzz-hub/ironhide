@@ -1,6 +1,6 @@
 [project]
 name = "ironhide"
-version = "0.1.10"
+version = "0.1.11"
 description = "OOP llm agentic framework"
 readme = "README.md"
 authors = [

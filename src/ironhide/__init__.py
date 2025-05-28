@@ -187,7 +187,6 @@ T = TypeVar("T", bound=BaseModel)
 class BaseAgent(ABC):
     model: str
     instructions: str | None = None
-    response_format: type[BaseModel] | None = None
     chain_of_thought: tuple[str, ...] | None = None
     feedback_loop: str | None = None
     messages: list[Message] = []
@@ -195,14 +194,12 @@ class BaseAgent(ABC):
     def __init__(
         self,
         instructions: str | None = None,
-        response_format: type[T] | None = None,
         chain_of_thought: tuple[str, ...] | None = None,
         feedback_loop: str | None = None,
         model: str | None = None,
         messages: list[Message] | None = None,
     ) -> None:
         self.instructions = instructions or getattr(self, "instructions", None)
-        self.response_format = response_format or getattr(self, "response_format", None)
         self.chain_of_thought = chain_of_thought or getattr(
             self,
             "chain_of_thought",
@@ -333,11 +330,7 @@ class BaseAgent(ABC):
         response_format: type[BaseModel] | None = None,
     ) -> Message:
         current_response_format = (
-            Reason
-            if is_thought
-            else Approval
-            if is_approval
-            else response_format or self.response_format
+            Reason if is_thought else Approval if is_approval else response_format
         )
         data = Data(
             model=self.model,
@@ -392,12 +385,12 @@ class BaseAgent(ABC):
     async def _context_provider(self, input_message: str) -> str:
         return input_message
 
-    async def chat(
+    async def _base_chat(
         self,
         input_message: str | RequestFiles,
         response_format: type[T] | None = None,
         files: RequestFiles | None = None,
-    ) -> T | BaseModel | str:
+    ) -> str:
         # Handle audio transcription if input_message is not a string
         processed_message: str = (
             await audio_transcription(input_message)
@@ -428,6 +421,7 @@ class BaseAgent(ABC):
             )
 
         is_approved = False
+        message: Message | None = None
         while not is_approved:
             # Chain of thought
             if self.chain_of_thought:
@@ -457,17 +451,34 @@ class BaseAgent(ABC):
                 message = await self._api_call(is_approval=True)
                 is_approved = Approval.model_validate_json(
                     str(message.content) or "",
-            ).is_approved
+                ).is_approved
                 if is_approved:
                     message = await self._api_call(response_format=response_format)
                     break
             else:
                 break
+        content = ""
+        if message:
+            content = str(message.content)
+        return content
 
-        result_cls = response_format or self.response_format
-        if result_cls:
-            return result_cls.model_validate_json(str(message.content) or "")
-        return str(message.content) or ""
+    async def chat(
+        self,
+        input_message: str | RequestFiles,
+        files: RequestFiles | None = None,
+    ) -> str:
+        return await self._base_chat(input_message=input_message, files=files)
+
+    async def structred_chat(
+        self,
+        input_message: str | RequestFiles,
+        response_format: type[T],
+        files: RequestFiles | None = None,
+    ) -> T:
+        content = await self._base_chat(
+            input_message=input_message, files=files, response_format=response_format
+        )
+        return response_format.model_validate_json(content)
 
 
 F = TypeVar("F", bound=Callable[..., Any])
