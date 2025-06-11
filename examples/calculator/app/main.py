@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Annotated, Any
 
@@ -35,8 +34,6 @@ class Calculator(BaseAgent):
         "Evaluate the previous reasoning to ensure that everything is correct and no operation result is being inferred. If find any issue, explain how to fix it.",
     )
 
-    feedback_loop = "Evaluate the previous steps and oly approve it if the function calls in the proper order, passing the return values of previously executed functions to subsequent ones that depend on those results to resolve the expression and without infer any result value. Otherwise, reject it and explain how to fix it. You must don't evaluate the correctness of the result."
-
     def __init__(self, value: int, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.value = value
@@ -66,6 +63,6 @@ agent = Calculator(value=999)
 @app.post("/")
 async def agent_message(
     message: Request,
-) -> Response | BaseModel | str:
+) -> Response:
     """Get response from agent."""
-    return await agent.chat(message.content, response_format=Response)
+    return await agent.structured_chat(message.content, response_format=Response)

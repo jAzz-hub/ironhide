@@ -7,11 +7,7 @@ authors = [
     { name = "Lucas Martins Soares", email = "lucasmsoares96@gmail.com" },
 ]
 requires-python = ">=3.13"
-dependencies = [
-    "pydantic>=2.10.5",
-    "pydantic-settings>=2.7.1",
-    "httpx>=0.28.1",
-]
+dependencies = ["pydantic>=2.10.5", "pydantic-settings>=2.7.1", "httpx>=0.28.1"]
 
 [build-system]
 requires = ["hatchling"]
@@ -26,4 +22,9 @@ exclude = ["venv", ".venv", "alembic"]
 
 [tool.ruff]
 select = ["ALL"]
-ignore = ["E501"]
+ignore = [
+    "E501",     # line-too-long
+    "PLR0913",  # too-many-arguments
+    "TD003",    # missing-todo-link
+    "TD002",    # missing-todo-author
+]

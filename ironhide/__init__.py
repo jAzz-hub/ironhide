@@ -1,3 +1,9 @@
+"""Ironhide: A framework for building AI agents with chat capabilities.
+
+This package provides tools and abstractions for creating AI agents that can engage in chat-based
+interactions, handle structured responses, and utilize various tools and feedback mechanisms.
+"""
+
 import base64
 import inspect
 import json
@@ -6,44 +12,45 @@ from abc import ABC
 from asyncio import sleep
 from collections.abc import Buffer, Callable
 from enum import Enum
+from http import HTTPStatus
+from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 import httpx
 from httpx._types import RequestFiles
 from pydantic import BaseModel, Field
 
+from ironhide.models import Provider
 from ironhide.settings import settings
 
 logger = logging.getLogger(__name__)
 
-COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 
-
-class PropertyDefinition(BaseModel):
+class _PropertyDefinition(BaseModel):
     type: str
     description: str
 
 
-class ParametersDefinition(BaseModel):
+class _ParametersDefinition(BaseModel):
     type: str = "object"
-    properties: dict[str, PropertyDefinition]
+    properties: dict[str, _PropertyDefinition]
     required: list[str]
-    additionalProperties: bool = False
+    additional_properties: bool = Field(alias="additionalProperties", default=False)
 
 
-class FunctionDefinition(BaseModel):
+class _FunctionDefinition(BaseModel):
     name: str
     description: str
-    parameters: ParametersDefinition
+    parameters: _ParametersDefinition
     strict: bool = True
 
 
-class ToolDefinition(BaseModel):
+class _ToolDefinition(BaseModel):
     type: str = "function"
-    function: FunctionDefinition
+    function: _FunctionDefinition
 
 
-class Headers(BaseModel):
+class _Headers(BaseModel):
     content_type: str = Field(
         alias="Content-Type",
         default="application/json",
@@ -54,120 +61,129 @@ class Headers(BaseModel):
     )
 
 
-class Role(str, Enum):
+class _Role(str, Enum):
     system = "system"
     assistant = "assistant"
     user = "user"
     tool = "tool"
 
 
-class PromptTokensDetails(BaseModel):
+class _PromptTokensDetails(BaseModel):
     cached_tokens: int
     audio_tokens: int
 
 
-class CompletionTokensDetails(BaseModel):
+class _CompletionTokensDetails(BaseModel):
     reasoning_tokens: int
     audio_tokens: int
     accepted_prediction_tokens: int
     rejected_prediction_tokens: int
 
 
-class Usage(BaseModel):
+class _Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    prompt_tokens_details: PromptTokensDetails
-    completion_tokens_details: CompletionTokensDetails
+    prompt_tokens_details: _PromptTokensDetails
+    completion_tokens_details: _CompletionTokensDetails
 
 
-class ToolFunction(BaseModel):
+class _ToolFunction(BaseModel):
     name: str
     arguments: str
 
 
-class ToolCall(BaseModel):
+class _ToolCall(BaseModel):
     id: str
     type: Literal["function"]
-    function: ToolFunction
+    function: _ToolFunction
 
 
-class TextContent(BaseModel):
+class _TextContent(BaseModel):
     type: str = "text"
     text: str
 
 
-class ImageUrlContent(BaseModel):
+class _ImageUrlContent(BaseModel):
     type: str = "image_url"
     image_url: dict[str, str]
 
 
-class Message(BaseModel):
-    role: Role
-    content: str | list[TextContent | ImageUrlContent] | None = None
-    tool_calls: list[ToolCall] | None = None
+class _Message(BaseModel):
+    role: _Role
+    content: str | list[_TextContent | _ImageUrlContent] | None = None
+    tool_calls: list[_ToolCall] | None = None
     tool_call_id: str | None = None
     refusal: str | None = None
     model_config = {"use_enum_values": True}
 
 
-class Choice(BaseModel):
+class _Choice(BaseModel):
     index: int
-    message: Message
+    message: _Message
     logprobs: dict[str, Any] | None = None
     finish_reason: str
 
 
-class ChatCompletion(BaseModel):
+class _ChatCompletion(BaseModel):
     id: str
     object: Literal["chat.completion"]
     created: int
     model: str
-    choices: list[Choice]
-    usage: Usage
+    choices: list[_Choice]
+    usage: _Usage
     service_tier: str
     system_fingerprint: str
 
 
-class JsonSchema(BaseModel):
+class _JsonSchema(BaseModel):
     name: str
     schema_: dict[str, Any] = Field(alias="schema")
     strict: bool = True
 
 
-class ResponseFormat(BaseModel):
+class _ResponseFormat(BaseModel):
     type: str = "json_schema"
-    json_schema: JsonSchema
+    json_schema: _JsonSchema
 
 
-class Data(BaseModel):
+class _Data(BaseModel):
     model: str
-    messages: list[Message]
-    response_format: ResponseFormat | None = None
-    tools: list[ToolDefinition] | None = None
+    messages: list[_Message]
+    response_format: _ResponseFormat | None = None
+    tools: list[_ToolDefinition] | None = None
     tool_choice: Literal["none", "auto", "required"] | None = None
 
 
-class Error(BaseModel):
+class _Error(BaseModel):
     message: str
     type: str
     param: str | None = None
     code: str | None
 
 
-class ErrorResponse(BaseModel):
-    error: Error
+class _ErrorResponse(BaseModel):
+    error: _Error
 
 
-class Reason(BaseModel):
+class _Reason(BaseModel):
     thought: str
 
 
-class Approval(BaseModel):
+class _Approval(BaseModel):
     is_approved: bool
 
 
 async def audio_transcription(files: RequestFiles) -> str:
+    """Transcribes audio files to text using the OpenAI API.
+
+    Args:
+        files: RequestFiles object containing the audio file to transcribe.
+
+    Returns:
+        The transcribed text as a string.
+
+    """
     transcription_url = "https://api.openai.com/v1/audio/transcriptions"
     transcription_headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
     async with httpx.AsyncClient() as client:
@@ -181,15 +197,66 @@ async def audio_transcription(files: RequestFiles) -> str:
     return str(transcription_response.json().get("text", ""))
 
 
+def get_prompt(file_path: str, prompt: str) -> str:
+    """Read and return the content of a prompt file.
+
+    Args:
+        file_path: Path to the main file.
+        prompt: Name of the prompt file (relative to the main file's directory).
+
+    Returns:
+        The content of the prompt file.
+
+    """
+    system_file_path = Path(file_path).parent / prompt
+    with system_file_path.open(encoding="utf-8") as system_file:
+        return system_file.read()
+
+
 T = TypeVar("T", bound=BaseModel)
 
 
 class BaseAgent(ABC):
+    """Base class for implementing AI agents with chat capabilities.
+
+    This abstract class provides the foundation for creating AI agents that can engage in chat-based interactions,
+    handle structured responses, and utilize various tools and feedback mechanisms.
+
+    Class Variables:
+        model (str): The AI model identifier to be used.
+        provider (Provider): The service provider for the AI model.
+        instructions (str | None): System instructions for the agent.
+        chain_of_thought (tuple[str, ...] | None): Sequential prompts for thought process.
+        feedback_loop (str | None): Prompt for feedback evaluation.
+        messages (list[_Message]): History of chat messages.
+        instructions (str | None): Initial system instructions for the agent.
+        chain_of_thought (tuple[str, ...] | None): Sequence of thought process prompts.
+        feedback_loop (str | None): Feedback evaluation prompt.
+        model (str | None): AI model identifier.
+        provider (Provider | None): Service provider for the AI model.
+        messages (list[_Message] | None): Initial chat message history.
+
+    Methods:
+        chat(input_message: str | RequestFiles, files: RequestFiles | None = None) -> str:
+            Handle a chat interaction with optional audio or image processing.
+                input_message: User's input message (text or audio files)
+                files: Optional image files for the chat
+                str: The assistant's response
+        structured_chat(input_message: str | RequestFiles, response_format: type[T], files: RequestFiles | None = None) -> T:
+            Handle a chat interaction with structured response validation.
+                input_message: User's input message (text or audio files)
+                response_format: Pydantic model for response validation
+                files: Optional image files for the chat
+                T: The assistant's response as a validated Pydantic model instance.
+
+    """
+
     model: str
+    provider: Provider
     instructions: str | None = None
     chain_of_thought: tuple[str, ...] | None = None
     feedback_loop: str | None = None
-    messages: list[Message] = []
+    messages: list[_Message]
 
     def __init__(
         self,
@@ -197,8 +264,20 @@ class BaseAgent(ABC):
         chain_of_thought: tuple[str, ...] | None = None,
         feedback_loop: str | None = None,
         model: str | None = None,
-        messages: list[Message] | None = None,
+        provider: Provider | None = None,
+        messages: list[_Message] | None = None,
     ) -> None:
+        """Initialize the BaseAgent with optional configuration parameters.
+
+        Args:
+            instructions: Initial system instructions for the agent.
+            chain_of_thought: Sequence of thought process prompts.
+            feedback_loop: Feedback evaluation prompt.
+            model: AI model identifier.
+            provider: Service provider for the AI model.
+            messages: Initial chat message history.
+
+        """
         self.instructions = instructions or getattr(self, "instructions", None)
         self.chain_of_thought = chain_of_thought or getattr(
             self,
@@ -206,6 +285,9 @@ class BaseAgent(ABC):
             None,
         )
         self.feedback_loop = feedback_loop or getattr(self, "feedback_loop", None)
+        self.provider = (
+            provider or getattr(self, "provider", None) or settings.default_provider
+        )
         self.model = model or getattr(self, "model", None) or settings.default_model
         self.messages = (
             messages or getattr(self, "messages", None) or self._get_history()
@@ -213,14 +295,14 @@ class BaseAgent(ABC):
         self.dict_tool: dict[str, Any] = {}
         self.tools = self._generate_tools()
         if self.instructions:
-            self.add_message(
-                Message(role=Role.system, content=self.instructions),
+            self._add_message(
+                _Message(role=_Role.system, content=self.instructions),
                 in_begin=True,
             )
         self.client = httpx.AsyncClient()
-        self.headers = Headers()
+        self.headers = _Headers()
 
-    def _get_history(self) -> list[Message]:
+    def _get_history(self) -> list[_Message]:
         return []
 
     def _remove_defaults(self, schema: dict[str, Any]) -> None:
@@ -255,7 +337,7 @@ class BaseAgent(ABC):
     def _make_response_format_section(
         self,
         response_format: type[BaseModel] | None,
-    ) -> ResponseFormat | None:
+    ) -> _ResponseFormat | None:
         if response_format is None:
             return None
         schema = response_format.model_json_schema()
@@ -266,14 +348,14 @@ class BaseAgent(ABC):
         if "required" not in schema:
             schema["required"] = list(properties.keys())
 
-        return ResponseFormat(
-            json_schema=JsonSchema(
+        return _ResponseFormat(
+            json_schema=_JsonSchema(
                 name=schema["title"],
                 schema=schema,
             ),
         )
 
-    def _generate_tools(self) -> list[ToolDefinition]:
+    def _generate_tools(self) -> list[_ToolDefinition]:
         tools = []
         json_type_mapping = {
             str: "string",
@@ -285,7 +367,7 @@ class BaseAgent(ABC):
             if not getattr(method, "is_tool", False):
                 continue
             properties = {
-                param_name: PropertyDefinition(
+                param_name: _PropertyDefinition(
                     type=json_type_mapping.get(param.annotation, "string"),
                     description=(
                         param.annotation.__metadata__[0]
@@ -302,11 +384,11 @@ class BaseAgent(ABC):
                 if param.default is param.empty and param_name != "self"
             ]
             tools.append(
-                ToolDefinition(
-                    function=FunctionDefinition(
+                _ToolDefinition(
+                    function=_FunctionDefinition(
                         name=name,
                         description=(inspect.getdoc(method) or "").strip(),
-                        parameters=ParametersDefinition(
+                        parameters=_ParametersDefinition(
                             properties=properties,
                             required=required,
                         ),
@@ -316,7 +398,7 @@ class BaseAgent(ABC):
             self.dict_tool[name] = method
         return tools
 
-    async def _call_function(self, name: str, args: dict[str, Any]) -> Any:
+    async def _call_function(self, name: str, args: dict[str, Any]) -> Any:  # noqa: ANN401
         selected_tool = self.dict_tool[name]
         if inspect.iscoroutinefunction(selected_tool):
             return await selected_tool(**args)
@@ -328,11 +410,11 @@ class BaseAgent(ABC):
         is_thought: bool = False,
         is_approval: bool = False,
         response_format: type[BaseModel] | None = None,
-    ) -> Message:
+    ) -> _Message:
         current_response_format = (
-            Reason if is_thought else Approval if is_approval else response_format
+            _Reason if is_thought else _Approval if is_approval else response_format
         )
-        data = Data(
+        data = _Data(
             model=self.model,
             messages=self.messages,
             response_format=self._make_response_format_section(current_response_format),
@@ -348,34 +430,34 @@ class BaseAgent(ABC):
         )
         while True:
             response = await self.client.post(
-                COMPLETIONS_URL,
+                settings.openai_url + "/chat/completions",
                 headers=self.headers.model_dump(by_alias=True),
                 json=data.model_dump(
                     by_alias=True,
                     mode="json",
                     exclude_none=True,
                 ),
-                timeout=settings.timeout,
+                timeout=settings.request_timeout,
             )
-            if response.status_code != 200:
+            if response.status_code != HTTPStatus.OK.value:
                 logger.error(
                     data.model_dump_json(by_alias=True, exclude_none=True, indent=4),
                 )
-                error_response = ErrorResponse.model_validate_json(response.text)
+                error_response = _ErrorResponse.model_validate_json(response.text)
                 logger.error(error_response.error.message)
-                if response.status_code == 429:
+                if response.status_code == HTTPStatus.TOO_MANY_REQUESTS.value:
                     logger.warning("Rate limit exceeded. Retrying in 10 seconds...")
+                    # TODO: esse valor deve ser capturado da string do erro
                     await sleep(10)
                     continue
-                else:
-                    raise Exception(error_response.error.message)
+                raise Exception(error_response.error.message)
             break
-        completion = ChatCompletion(**response.json())
+        completion = _ChatCompletion(**response.json())
         message = completion.choices[0].message
-        self.add_message(message)
+        self._add_message(message)
         return message
 
-    def add_message(self, message: Message, *, in_begin: bool = False) -> None:
+    def _add_message(self, message: _Message, *, in_begin: bool = False) -> None:
         if in_begin:
             self.messages.insert(0, message)
         else:
@@ -400,33 +482,33 @@ class BaseAgent(ABC):
 
         # Handle image transcription if files are provided
         if files:
-            (name, file_bytes, mime) = files["file"]  # type: ignore
+            name, file_bytes, mime = files["file"]  # type: ignore[misc, call-overload]
             if isinstance(file_bytes, Buffer):
                 base64_image = base64.b64encode(file_bytes).decode("utf-8")
-                content_items: list[TextContent | ImageUrlContent] = [
-                    TextContent(text=processed_message),
-                    ImageUrlContent(
+                content_items: list[_TextContent | _ImageUrlContent] = [
+                    _TextContent(text=processed_message),
+                    _ImageUrlContent(
                         image_url={"url": f"data:{mime!s};base64,{base64_image}"},
                     ),
                 ]
-                self.add_message(
-                    Message(role=Role.user, content=content_items),
+                self._add_message(
+                    _Message(role=_Role.user, content=content_items),
                 )
         else:
-            self.add_message(
-                Message(
-                    role=Role.user,
+            self._add_message(
+                _Message(
+                    role=_Role.user,
                     content=await self._context_provider(processed_message),
                 ),
             )
 
         is_approved = False
-        message: Message | None = None
+        message: _Message | None = None
         while not is_approved:
             # Chain of thought
             if self.chain_of_thought:
                 for thought in self.chain_of_thought:
-                    self.add_message(Message(role=Role.system, content=thought))
+                    self._add_message(_Message(role=_Role.system, content=thought))
                     await self._api_call(is_thought=True)
             message = await self._api_call(response_format=response_format)
 
@@ -438,18 +520,24 @@ class BaseAgent(ABC):
                     args = json.loads(tool_call.function.arguments)
                     id_ = tool_call.id
                     result = await self._call_function(name, args)
-                    self.add_message(
-                        Message(role=Role.tool, content=str(result), tool_call_id=id_),
+                    self._add_message(
+                        _Message(
+                            role=_Role.tool,
+                            content=str(result),
+                            tool_call_id=id_,
+                        ),
                     )
                 message = await self._api_call(response_format=response_format)
                 tool_calls = message.tool_calls
 
             # Feedback loop
             if self.feedback_loop:
-                self.add_message(Message(role=Role.system, content=self.feedback_loop))
+                self._add_message(
+                    _Message(role=_Role.system, content=self.feedback_loop),
+                )
                 await self._api_call(is_thought=True)
                 message = await self._api_call(is_approval=True)
-                is_approved = Approval.model_validate_json(
+                is_approved = _Approval.model_validate_json(
                     str(message.content) or "",
                 ).is_approved
                 if is_approved:
@@ -467,16 +555,39 @@ class BaseAgent(ABC):
         input_message: str | RequestFiles,
         files: RequestFiles | None = None,
     ) -> str:
+        """Handle a chat interaction, optionally processing audio or image files.
+
+        Args:
+            input_message: The user's input message, which can be text or audio files.
+            files: Optional image files to be included in the chat.
+
+        Returns:
+            The assistant's response as a string.
+
+        """
         return await self._base_chat(input_message=input_message, files=files)
 
-    async def structred_chat(
+    async def structured_chat(
         self,
         input_message: str | RequestFiles,
         response_format: type[T],
         files: RequestFiles | None = None,
     ) -> T:
+        """Handle a chat interaction with a structured response.
+
+        Args:
+            input_message: The user's input message, which can be text or audio files.
+            response_format: The Pydantic model to validate and parse the response.
+            files: Optional image files to be included in the chat.
+
+        Returns:
+            The assistant's response as a Pydantic model instance.
+
+        """
         content = await self._base_chat(
-            input_message=input_message, files=files, response_format=response_format
+            input_message=input_message,
+            files=files,
+            response_format=response_format,
         )
         return response_format.model_validate_json(content)
 
@@ -485,5 +596,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 def tool(func: F) -> F:
+    """Mark a method as a tool that can be called by the AI model."""
     func.is_tool = True  # type: ignore[attr-defined]
     return func
