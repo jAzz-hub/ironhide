@@ -473,27 +473,14 @@ class BaseAgent(ABC):
         response_format: type[T] | None = None,
         files: RequestFiles | None = None,
     ) -> str:
-        # Handle audio transcription if input_message is not a string
         processed_message: str = (
             await audio_transcription(input_message)
             if not isinstance(input_message, str)
             else input_message
         )
 
-        # Handle image transcription if files are provided
         if files:
-            name, file_bytes, mime = files["file"]  # type: ignore[misc, call-overload]
-            if isinstance(file_bytes, Buffer):
-                base64_image = base64.b64encode(file_bytes).decode("utf-8")
-                content_items: list[_TextContent | _ImageUrlContent] = [
-                    _TextContent(text=processed_message),
-                    _ImageUrlContent(
-                        image_url={"url": f"data:{mime!s};base64,{base64_image}"},
-                    ),
-                ]
-                self._add_message(
-                    _Message(role=_Role.user, content=content_items),
-                )
+            await self._handle_image_message(processed_message, files)
         else:
             self._add_message(
                 _Message(
@@ -505,43 +492,12 @@ class BaseAgent(ABC):
         is_approved = False
         message: _Message | None = None
         while not is_approved:
-            # Chain of thought
-            if self.chain_of_thought:
-                for thought in self.chain_of_thought:
-                    self._add_message(_Message(role=_Role.system, content=thought))
-                    await self._api_call(is_thought=True)
+            await self._handle_chain_of_thought()
             message = await self._api_call(response_format=response_format)
-
-            # Tool calls
-            tool_calls = message.tool_calls
-            while tool_calls:
-                for tool_call in tool_calls:
-                    name = tool_call.function.name
-                    args = json.loads(tool_call.function.arguments)
-                    id_ = tool_call.id
-                    result = await self._call_function(name, args)
-                    self._add_message(
-                        _Message(
-                            role=_Role.tool,
-                            content=str(result),
-                            tool_call_id=id_,
-                        ),
-                    )
-                message = await self._api_call(response_format=response_format)
-                tool_calls = message.tool_calls
-
-            # Feedback loop
+            message = await self._handle_tool_calls(message, response_format)
             if self.feedback_loop:
-                self._add_message(
-                    _Message(role=_Role.system, content=self.feedback_loop),
-                )
-                await self._api_call(is_thought=True)
-                message = await self._api_call(is_approval=True)
-                is_approved = _Approval.model_validate_json(
-                    str(message.content) or "",
-                ).is_approved
+                is_approved, message = await self._handle_feedback_loop(message, response_format)
                 if is_approved:
-                    message = await self._api_call(response_format=response_format)
                     break
             else:
                 break
@@ -549,6 +505,58 @@ class BaseAgent(ABC):
         if message:
             content = str(message.content)
         return content
+
+    async def _handle_image_message(self, processed_message: str, files: RequestFiles) -> None:
+        name, file_bytes, mime = files["file"]  # type: ignore[misc, call-overload]
+        if isinstance(file_bytes, Buffer):
+            base64_image = base64.b64encode(file_bytes).decode("utf-8")
+            content_items: list[_TextContent | _ImageUrlContent] = [
+                _TextContent(text=processed_message),
+                _ImageUrlContent(
+                    image_url={"url": f"data:{mime!s};base64,{base64_image}"},
+                ),
+            ]
+            self._add_message(
+                _Message(role=_Role.user, content=content_items),
+            )
+
+    async def _handle_chain_of_thought(self) -> None:
+        if self.chain_of_thought:
+            for thought in self.chain_of_thought:
+                self._add_message(_Message(role=_Role.system, content=thought))
+                await self._api_call(is_thought=True)
+
+    async def _handle_tool_calls(self, message: _Message, response_format: type[T] | None) -> _Message:
+        tool_calls = message.tool_calls
+        while tool_calls:
+            for tool_call in tool_calls:
+                name = tool_call.function.name
+                args = json.loads(tool_call.function.arguments)
+                id_ = tool_call.id
+                result = await self._call_function(name, args)
+                self._add_message(
+                    _Message(
+                        role=_Role.tool,
+                        content=str(result),
+                        tool_call_id=id_,
+                    ),
+                )
+            message = await self._api_call(response_format=response_format)
+            tool_calls = message.tool_calls
+        return message
+
+    async def _handle_feedback_loop(self, message: _Message, response_format: type[T] | None) -> tuple[bool, _Message]:
+        self._add_message(
+            _Message(role=_Role.system, content=self.feedback_loop),
+        )
+        await self._api_call(is_thought=True)
+        message = await self._api_call(is_approval=True)
+        is_approved = _Approval.model_validate_json(
+            str(message.content) or "",
+        ).is_approved
+        if is_approved:
+            message = await self._api_call(response_format=response_format)
+        return is_approved, message
 
     async def chat(
         self,
