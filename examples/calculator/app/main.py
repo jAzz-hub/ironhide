@@ -3,6 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import FastAPI
 from ironhide import BaseAgent, tool
+from ironhide.models import Provider
 from ironhide.settings import settings
 from pydantic import BaseModel
 
@@ -63,6 +64,7 @@ agent = Calculator(value=999)
 @app.post("/")
 async def agent_message(
     message: Request,
-) -> Response:
+) -> int:
     """Get response from agent."""
-    return await agent.structured_chat(message.content, response_format=Response)
+    response = await agent.structured_chat(message.content, response_format=Response)
+    return response.result

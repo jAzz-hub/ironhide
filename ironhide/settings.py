@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # General
     default_provider: Provider = Provider.openai
     default_model: str = "gpt-4o-mini"
+    default_api_key: str = ""
     log_level: str = "INFO"
     request_timeout: int = 30
 

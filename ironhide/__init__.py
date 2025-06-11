@@ -55,10 +55,7 @@ class _Headers(BaseModel):
         alias="Content-Type",
         default="application/json",
     )
-    authorization: str = Field(
-        alias="Authorization",
-        default=f"Bearer {settings.openai_api_key}",
-    )
+    authorization: str = Field(alias="Authorization")
 
 
 class _Role(str, Enum):
@@ -174,18 +171,19 @@ class _Approval(BaseModel):
     is_approved: bool
 
 
-async def audio_transcription(files: RequestFiles) -> str:
+async def audio_transcription(files: RequestFiles, api_key: str) -> str:
     """Transcribes audio files to text using the OpenAI API.
 
     Args:
         files: RequestFiles object containing the audio file to transcribe.
+        api_key: OpenAI API key for authentication.
 
     Returns:
         The transcribed text as a string.
 
     """
     transcription_url = "https://api.openai.com/v1/audio/transcriptions"
-    transcription_headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
+    transcription_headers = {"Authorization": f"Bearer {api_key}"}
     async with httpx.AsyncClient() as client:
         data = {"model": settings.openai_audio_to_text_model_id}
         transcription_response = await client.post(
@@ -252,6 +250,7 @@ class BaseAgent(ABC):
     """
 
     model: str
+    api_key: str
     provider: Provider
     instructions: str | None = None
     chain_of_thought: tuple[str, ...] | None = None
@@ -264,6 +263,7 @@ class BaseAgent(ABC):
         chain_of_thought: tuple[str, ...] | None = None,
         feedback_loop: str | None = None,
         model: str | None = None,
+        api_key: str | None = None,
         provider: Provider | None = None,
         messages: list[_Message] | None = None,
     ) -> None:
@@ -289,6 +289,9 @@ class BaseAgent(ABC):
             provider or getattr(self, "provider", None) or settings.default_provider
         )
         self.model = model or getattr(self, "model", None) or settings.default_model
+        self.api_key = (
+            api_key or getattr(self, "api_key", None) or settings.default_api_key
+        )
         self.messages = (
             messages or getattr(self, "messages", None) or self._get_history()
         )
@@ -300,7 +303,7 @@ class BaseAgent(ABC):
                 in_begin=True,
             )
         self.client = httpx.AsyncClient()
-        self.headers = _Headers()
+        self.headers = _Headers(Authorization=f"Bearer {self.api_key}")
 
     def _get_history(self) -> list[_Message]:
         return []
@@ -448,6 +451,7 @@ class BaseAgent(ABC):
                 if response.status_code == HTTPStatus.TOO_MANY_REQUESTS.value:
                     logger.warning("Rate limit exceeded. Retrying in 10 seconds...")
                     # TODO: esse valor deve ser capturado da string do erro
+                    # TODO: verificar se a mensagem do erro é isso: You exceeded your current quota, please check your plan and billing details. For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.
                     await sleep(10)
                     continue
                 raise Exception(error_response.error.message)
@@ -474,7 +478,7 @@ class BaseAgent(ABC):
         files: RequestFiles | None = None,
     ) -> str:
         processed_message: str = (
-            await audio_transcription(input_message)
+            await audio_transcription(input_message, self.api_key)
             if not isinstance(input_message, str)
             else input_message
         )
@@ -496,7 +500,9 @@ class BaseAgent(ABC):
             message = await self._api_call(response_format=response_format)
             message = await self._handle_tool_calls(message, response_format)
             if self.feedback_loop:
-                is_approved, message = await self._handle_feedback_loop(message, response_format)
+                is_approved, message = await self._handle_feedback_loop(
+                    message, response_format
+                )
                 if is_approved:
                     break
             else:
@@ -506,7 +512,9 @@ class BaseAgent(ABC):
             content = str(message.content)
         return content
 
-    async def _handle_image_message(self, processed_message: str, files: RequestFiles) -> None:
+    async def _handle_image_message(
+        self, processed_message: str, files: RequestFiles
+    ) -> None:
         name, file_bytes, mime = files["file"]  # type: ignore[misc, call-overload]
         if isinstance(file_bytes, Buffer):
             base64_image = base64.b64encode(file_bytes).decode("utf-8")
@@ -526,7 +534,9 @@ class BaseAgent(ABC):
                 self._add_message(_Message(role=_Role.system, content=thought))
                 await self._api_call(is_thought=True)
 
-    async def _handle_tool_calls(self, message: _Message, response_format: type[T] | None) -> _Message:
+    async def _handle_tool_calls(
+        self, message: _Message, response_format: type[T] | None
+    ) -> _Message:
         tool_calls = message.tool_calls
         while tool_calls:
             for tool_call in tool_calls:
@@ -545,7 +555,9 @@ class BaseAgent(ABC):
             tool_calls = message.tool_calls
         return message
 
-    async def _handle_feedback_loop(self, message: _Message, response_format: type[T] | None) -> tuple[bool, _Message]:
+    async def _handle_feedback_loop(
+        self, message: _Message, response_format: type[T] | None
+    ) -> tuple[bool, _Message]:
         self._add_message(
             _Message(role=_Role.system, content=self.feedback_loop),
         )
@@ -597,6 +609,7 @@ class BaseAgent(ABC):
             files=files,
             response_format=response_format,
         )
+        # TODO: Adicionar try catch na validação
         return response_format.model_validate_json(content)
 
 
