@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import FastAPI, File, UploadFile
-from ironhide import BaseAgent, tool
+from ironhide import OpenaiAgent, tool
 from ironhide.settings import settings
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,7 @@ class Request(BaseModel):
     content: str
 
 
-class Image(BaseAgent):
+class Image(OpenaiAgent):
     instructions = """You are an expert at extracting text from images and converting it into structured data. 
     Your task is to:
     1. First, carefully read and extract all text visible in the provided image
@@ -37,7 +37,7 @@ agent = Image()
 @app.post("/")
 async def agent_message(
     file: Annotated[UploadFile, File()],
-) -> BaseModel | str:
+) -> str:
     """Extract text from image and convert to structured data."""
     contents = await file.read()
     files = {"file": (file.filename, contents, file.content_type)}

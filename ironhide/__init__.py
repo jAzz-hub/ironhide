@@ -214,7 +214,7 @@ def get_prompt(file_path: str, prompt: str) -> str:
 T = TypeVar("T", bound=BaseModel)
 
 
-class BaseAgent(ABC):
+class OpenaiAgent(ABC):
     """Base class for implementing AI agents with chat capabilities.
 
     This abstract class provides the foundation for creating AI agents that can engage in chat-based interactions,

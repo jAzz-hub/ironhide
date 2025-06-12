@@ -2,7 +2,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import FastAPI
-from ironhide import BaseAgent, tool
+from ironhide import OpenaiAgent, tool
 from ironhide.models import Provider
 from ironhide.settings import settings
 from pydantic import BaseModel
@@ -27,7 +27,7 @@ class Response(BaseModel):
     result: int
 
 
-class Calculator(BaseAgent):
+class Calculator(OpenaiAgent):
     instructions = """You are a function-calling agent designed to calculate expressions through a chain of reasoning. You will receive a mathematical expression, and your task will be to identify and execute the correct functions in the proper order, passing the return values of previously executed functions to subsequent ones that depend on those results to resolve the expression. You are not an agent that performs calculations directly, only one that executes functions to calculate. You are not allowed to infer the result of any operation."""
 
     chain_of_thought = (

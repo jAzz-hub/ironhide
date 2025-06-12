@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import FastAPI
-from ironhide import BaseAgent, tool
+from ironhide import OpenaiAgent, tool
 from ironhide.settings import settings
 from pydantic import BaseModel, Field
 
@@ -58,7 +58,7 @@ class Dados(BaseModel):
     )
 
 
-class Extractor(BaseAgent):
+class Extractor(OpenaiAgent):
     instructions = "You are an expert at structured data extraction. You will be given unstructured text and should convert it into the given structure."
 
     chain_of_thought = (
@@ -72,6 +72,6 @@ agent = Extractor()
 @app.post("/")
 async def agent_message(
     message: Request,
-) -> Dados | BaseModel | str:
+) -> Dados:
     """Get response from agent."""
-    return await agent.chat(message.content, response_format=Dados)
+    return await agent.structured_chat(message.content, response_format=Dados)
