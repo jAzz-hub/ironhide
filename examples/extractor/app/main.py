@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import FastAPI
-from ironhide import OpenaiAgent, tool
+from ironhide.gemini import GeminiAgent, tool
 from ironhide.settings import settings
 from pydantic import BaseModel, Field
 
@@ -58,13 +58,8 @@ class Dados(BaseModel):
     )
 
 
-class Extractor(OpenaiAgent):
+class Extractor(GeminiAgent):
     instructions = "You are an expert at structured data extraction. You will be given unstructured text and should convert it into the given structure."
-
-    chain_of_thought = (
-        "[thought] Analise cada um dos campos requisitados com base no texto fornecido.",
-    )
-
 
 agent = Extractor()
 

@@ -289,7 +289,6 @@ class GeminiAgent(ABC):
 
     model: str
     api_key: str
-    provider: Provider
     instructions: str | None = None
     chain_of_thought: tuple[str, ...] | None = None
     feedback_loop: str | None = None
@@ -302,7 +301,6 @@ class GeminiAgent(ABC):
         feedback_loop: str | None = None,
         model: str | None = None,
         api_key: str | None = None,
-        provider: Provider | None = None,
         messages: list[_Content] | None = None,
     ) -> None:
         """Initialize the GeminiAgent with optional configuration parameters.
@@ -324,12 +322,9 @@ class GeminiAgent(ABC):
             None,
         )
         self.feedback_loop = feedback_loop or getattr(self, "feedback_loop", None)
-        self.provider = (
-            provider or getattr(self, "provider", None) or settings.default_provider
-        )
-        self.model = model or getattr(self, "model", None) or settings.default_model
+        self.model = model or getattr(self, "model", None) or settings.gemini_model
         self.api_key = (
-            api_key or getattr(self, "api_key", None) or settings.default_api_key
+            api_key or getattr(self, "api_key", None) or settings.gemini_api_key
         )
         self.messages = (
             messages or getattr(self, "messages", None) or self._get_history()
@@ -343,7 +338,8 @@ class GeminiAgent(ABC):
         return []
 
     def _convert_pydantic_to_gemini_schema(
-        self, schema: dict[str, Any]
+        self,
+        schema: dict[str, Any],
     ) -> _SchemaDefinition:
         """Convert Pydantic schema to Gemini schema format."""
         type_mapping = {
@@ -571,6 +567,10 @@ class GeminiAgent(ABC):
         response_format: type[T] | None = None,
         files: RequestFiles | None = None,
     ) -> str:
+    
+        # TODO: Adicionar lógica para diferentes serviços de extração de audio
+        #### TODO: Adaptar lógica de audio da openai para gemini
+
         processed_message: str = (
             await audio_transcription(input_message, self.api_key)
             if not isinstance(input_message, str)

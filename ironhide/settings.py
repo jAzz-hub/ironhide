@@ -20,9 +20,9 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash-preview-05-20"
 
     # General
-    default_provider: Provider = Provider.openai
-    default_model: str = "gpt-4o-mini"
-    default_api_key: str = ""
+    # default_provider: Provider = Provider.openai
+    # default_model: str = "gpt-4o-mini"
+    # default_api_key: str = ""
     log_level: str = "INFO"
     request_timeout: int = 30
 

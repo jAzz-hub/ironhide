@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import FastAPI, File, UploadFile
-from ironhide import OpenaiAgent, tool
+from ironhide.gemini import GeminiAgent, tool
 from ironhide.settings import settings
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,7 @@ class Request(BaseModel):
     content: str
 
 
-class Image(OpenaiAgent):
+class Image(GeminiAgent):
     instructions = """You are an expert at extracting text from images and converting it into structured data. 
     Your task is to:
     1. First, carefully read and extract all text visible in the provided image
@@ -42,3 +42,5 @@ async def agent_message(
     contents = await file.read()
     files = {"file": (file.filename, contents, file.content_type)}
     return await agent.chat("Extract the text from the image", files=files)
+
+# TODO: não passou na lógica de enviar imagem
