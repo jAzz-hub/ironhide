@@ -222,15 +222,17 @@ class _Error(BaseModel):
 class _ErrorResponse(BaseModel):
     error: _Error
 
-
+# TODO: da pra tirar
 class _Reason(BaseModel):
     thought: str
 
 
+# TODO: da pra tirar
 class _Approval(BaseModel):
     is_approved: bool
 
 
+# TODO: mudar para lógica de extração de audio separada
 async def audio_transcription(files: RequestFiles, api_key: str) -> str:  # noqa: ARG001
     """Transcribes audio files to text using the Gemini API.
 
@@ -244,22 +246,6 @@ async def audio_transcription(files: RequestFiles, api_key: str) -> str:  # noqa
     """
     # For now, return a placeholder as Gemini audio transcription may differ
     return "Audio transcription not yet implemented for Gemini"
-
-
-def get_prompt(file_path: str, prompt: str) -> str:
-    """Read and return the content of a prompt file.
-
-    Args:
-        file_path: Path to the main file.
-        prompt: Name of the prompt file (relative to the main file's directory).
-
-    Returns:
-        The content of the prompt file.
-
-    """
-    system_file_path = Path(file_path).parent / prompt
-    with system_file_path.open(encoding="utf-8") as system_file:
-        return system_file.read()
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -464,6 +450,7 @@ class GeminiAgent(ABC):
             return await selected_tool(**args)
         return selected_tool(**args)
 
+    # TODO: isso pode ser desnecessário
     def _convert_openai_messages_to_gemini(
         self, messages: list[_Content]
     ) -> tuple[list[_Content], _SystemInstruction | None]:
@@ -544,6 +531,7 @@ class GeminiAgent(ABC):
                 )
                 error_response = _ErrorResponse(**response.json())
                 msg = f"Gemini API error: {error_response.error.message}"
+                # TODO: faltou a lógica de TOO_MANY_REQUSTS if response.status_code == HTTPStatus.TOO_MANY_REQUESTS.value:
                 raise httpx.HTTPStatusError(
                     msg, request=response.request, response=response
                 )
@@ -578,6 +566,7 @@ class GeminiAgent(ABC):
         )
 
         if files:
+            # TODO: Adaptar a lógica de enviar a imagem na mensagem
             await self._handle_image_message(processed_message, files)
         else:
             self._add_message(
